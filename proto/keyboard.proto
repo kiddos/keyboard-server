@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package kb;
+
+message APMRequest {
+}
+
+message APMResponse {
+  double apm = 1;
+}
+
+service KeyboardService {
+  rpc GetAPM(APMRequest) returns (APMResponse) {}
+}
