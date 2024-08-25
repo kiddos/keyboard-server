@@ -1,6 +1,8 @@
 #include "apm_calldata.h"
 
-#include <glog/logging.h>
+#include <fcntl.h>
+#include <linux/input.h>
+#include <poll.h>
 
 #include <fstream>
 
@@ -21,17 +23,22 @@ bool starts_with(const std::string& s, const std::string& p) {
   return s.substr(0, p.length()) == p;
 }
 
-KeyboardListener::KeyboardListener(int interval) : interval_(interval * 1000) {
+KeyboardListener::KeyboardListener(int interval)
+    : fd_(-1), interval_(interval * 1000) {
   FindKeyboardDevice();
 
   // X11 display
-  LOG(INFO) << "get X11 display handle...";
-  display_ = XOpenDisplay(nullptr);
+  // LOG(INFO) << "get X11 display handle...";
+  // display_ = XOpenDisplay(nullptr);
 }
 
 KeyboardListener::~KeyboardListener() {
-  if (display_) {
-    XCloseDisplay(display_);
+  // if (display_) {
+  //   XCloseDisplay(display_);
+  // }
+
+  if (fd_ >= 0) {
+    close(fd_);
   }
 }
 
@@ -67,13 +74,24 @@ void KeyboardListener::FindKeyboardDevice() {
           if (key == "EV" && value == "120013") {
             if (!handler.empty()) {
               dev_ = "/dev/input/" + handler;
-              LOG(INFO) << "keyboard device: " << dev_;
               return;
             }
           }
         }
       }
     }
+  }
+}
+
+void KeyboardListener::PrepareFileDescriptor() {
+  if (fd_ < 0) {
+    FindKeyboardDevice();
+    if (dev_.empty()) {
+      return;
+    }
+
+    LOG(INFO) << "keyboard device: " << dev_;
+    fd_ = open(dev_.c_str(), O_RDONLY | O_NONBLOCK);
   }
 }
 
@@ -84,61 +102,52 @@ u64 get_system_millis() {
 }
 
 void KeyboardListener::ReadAPM() {
-  if (dev_.empty()) {
+  PrepareFileDescriptor();
+  if (fd_ < 0) {
     return;
   }
 
-  // int fd = open(dev_.c_str(), O_RDONLY | O_NONBLOCK);
-  // if (fd < 0) {
-  //   return;
-  // }
-  //
-  // struct timeval cur;
-  // gettimeofday(&cur, NULL);
-  // while (!d_.empty() && cur.tv_sec - d_.front().time.tv_sec > interval_) {
-  //   d_.pop_front();
-  // }
-  //
-  // struct input_event event;
-  // // std::cout << "size=" << sizeof(event) << std::endl;
-  // struct pollfd pollfd = {
-  //     .fd = fd,
-  //     .events = POLLIN,
-  //     .revents = 0,
-  // };
-  // int result = poll(&pollfd, 1, 100);
-  // if (result < 0) {
-  //   return;
-  // }
-  //
-  // if (pollfd.revents & POLLIN) {
-  //   while (read(fd, &event, sizeof(event)) == sizeof(event)) {
-  //     if (event.type == EV_KEY) {
-  //       d_.push_back(event);
-  //     }
-  //   }
-  // }
-
-  if (!display_) {
+  struct input_event event;
+  struct pollfd pollfd = {
+      .fd = fd_,
+      .events = POLLIN,
+      .revents = 0,
+  };
+  int result = poll(&pollfd, 1, 66);
+  if (result < 0) {
     return;
   }
 
-  Window current;
-  int revert;
-  XGetInputFocus(display_, &current, &revert);
-  XSelectInput(display_, current, KeyPressMask);
-
-  while (XPending(display_)) {
-    XEvent event;
-    XNextEvent(display_, &event);
-    switch (event.type) {
-      case KeyPress:
-        u32 keycode = event.xkey.keycode;
+  if (pollfd.revents & POLLIN) {
+    while (read(fd_, &event, sizeof(event)) == sizeof(event)) {
+      if (event.type == EV_KEY) {
+        u32 keycode = event.code;
         u64 t = get_system_millis();
-        d_.push_back({keycode, t});
-        break;
+        d_.push_back(KeyEvent{keycode, t});
+      }
     }
   }
+
+  // if (!display_) {
+  //   return;
+  // }
+
+  // Window current;
+  // int revert;
+  // XGetInputFocus(display_, &current, &revert);
+  // XSelectInput(display_, current, KeyPressMask);
+  //
+  // while (XPending(display_)) {
+  //   XEvent event;
+  //   XNextEvent(display_, &event);
+  //   switch (event.type) {
+  //     case KeyPress:
+  //       u32 keycode = event.xkey.keycode;
+  //       u64 t = get_system_millis();
+  //       d_.push_back({keycode, t});
+  //       break;
+  //   }
+  // }
 
   u64 current_t = get_system_millis();
   while (!d_.empty() && current_t - d_.front().t >= interval_) {
@@ -150,6 +159,7 @@ void KeyboardListener::ReadAPM() {
     double time_passed = current_t - d_.front().t + 1e-6;
     current_apm = (double)d_.size() / time_passed * 60 * 1000;
   }
+  // std::cout << "apm=" << current_apm << std::endl;
 }
 
 APMCallData::APMCallData(KeyboardService::AsyncService* service,

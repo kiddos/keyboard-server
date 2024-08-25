@@ -1,10 +1,12 @@
 #ifndef APM_CALLDATA_H
 #define APM_CALLDATA_H
 
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/XInput.h>
-#undef Status
+// #include <X11/Xlib.h>
+// #include <X11/Xutil.h>
+// #include <X11/extensions/XInput.h>
+// #undef Status
+
+#include <glog/logging.h>
 
 #include "call_status.h"
 #include "keyboard.grpc.pb.h"
@@ -29,10 +31,12 @@ class KeyboardListener {
   ~KeyboardListener();
 
   void FindKeyboardDevice();
+  void PrepareFileDescriptor();
   void ReadAPM();
 
  private:
-  Display* display_;
+  // Display* display_;
+  int fd_;
   u64 interval_;
   std::string dev_;
   std::deque<KeyEvent> d_;

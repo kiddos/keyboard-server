@@ -46,6 +46,6 @@ int main(int argc, char* argv[]) {
   const std::string address = "localhost:" + std::to_string(FLAGS_port);
   APMClient greeter(
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials()));
-  std::cout << greeter.GetAPM() << std::endl;
+  std::cout << std::fixed << std::setprecision(3) << greeter.GetAPM() << std::endl;
   return 0;
 }
