@@ -73,7 +73,7 @@ target_link_libraries(kb_grpc_proto
   ${_GRPC_GRPCPP}
   ${_PROTOBUF_LIBPROTOBUF})
 
-add_executable(keyboard_server keyboard_server.cc)
+add_executable(keyboard_server keyboard_server.cc apm_calldata.cc)
 target_link_libraries(keyboard_server
   kb_grpc_proto
   ${_REFLECTION}
