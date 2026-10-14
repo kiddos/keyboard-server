@@ -1,11 +1,18 @@
 use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyPressRecord {
     pub timestamp: String,
     pub key_name: String,
     pub event_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MinuteStat {
+    pub minute: String,
+    pub count: i64,
 }
 
 pub struct DbManager;
@@ -55,9 +62,38 @@ impl DbManager {
         Ok(count)
     }
 
-    #[cfg(test)]
     pub fn count_keypresses(conn: &Connection) -> Result<i64> {
         conn.query_row("SELECT COUNT(*) FROM keypresses", [], |row| row.get(0))
+    }
+
+    pub fn get_keypresses_per_minute(conn: &Connection, limit: usize) -> Result<Vec<MinuteStat>> {
+        let mut stmt = conn.prepare(
+            "SELECT substr(timestamp, 1, 16) AS minute, COUNT(*) AS count
+             FROM keypresses
+             GROUP BY minute
+             ORDER BY minute DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(MinuteStat {
+                minute: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })?;
+
+        let mut result = Vec::new();
+        for r in rows {
+            result.push(r?);
+        }
+        Ok(result)
+    }
+
+    pub fn get_keypress_count_since(conn: &Connection, since_iso: &str) -> Result<i64> {
+        conn.query_row(
+            "SELECT COUNT(*) FROM keypresses WHERE timestamp >= ?1",
+            params![since_iso],
+            |row| row.get(0),
+        )
     }
 }
 

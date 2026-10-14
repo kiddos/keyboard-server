@@ -1,12 +1,50 @@
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+#[path = "../src/cli.rs"]
+mod cli;
 #[path = "../src/db.rs"]
 mod db;
+#[path = "../src/rpc.rs"]
+mod rpc;
+#[path = "../src/tracker.rs"]
+mod tracker;
 
 use db::{DbManager, KeyPressRecord};
+use rpc::RpcServer;
+use tracker::KeyTracker;
+
+#[test]
+fn test_cli_args_defaults() {
+    use clap::Parser;
+    let cli = cli::Cli::parse_from(&["keyboard-server"]);
+    assert_eq!(cli.db_path.to_str().unwrap(), "keypresses.db");
+    assert_eq!(cli.rpc_addr, "127.0.0.1:9090");
+    assert_eq!(cli.flush_interval_secs, 5);
+}
+
+#[test]
+fn test_cli_args_custom() {
+    use clap::Parser;
+    let cli = cli::Cli::parse_from(&[
+        "keyboard-server",
+        "--db-path",
+        "/tmp/custom_key.db",
+        "--rpc-addr",
+        "127.0.0.1:8080",
+        "--flush-interval",
+        "10",
+    ]);
+    assert_eq!(cli.db_path.to_str().unwrap(), "/tmp/custom_key.db");
+    assert_eq!(cli.rpc_addr, "127.0.0.1:8080");
+    assert_eq!(cli.flush_interval_secs, 10);
+}
 
 #[test]
 fn test_sqlite_db_creation_and_indexing() {
@@ -117,4 +155,117 @@ fn test_empty_flush_returns_zero() {
     let empty: Vec<KeyPressRecord> = vec![];
     let count = DbManager::flush_keypresses(&mut conn, &empty).unwrap();
     assert_eq!(count, 0);
+}
+
+#[test]
+fn test_keypresses_per_minute_db_query() {
+    let mut conn = DbManager::init_db(":memory:").expect("Failed to init DB");
+
+    let records = vec![
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:00:10Z".to_string(),
+            key_name: "KeyA".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:00:20Z".to_string(),
+            key_name: "KeyB".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:01:05Z".to_string(),
+            key_name: "KeyC".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+    ];
+
+    DbManager::flush_keypresses(&mut conn, &records).unwrap();
+
+    let minute_stats = DbManager::get_keypresses_per_minute(&conn, 10).unwrap();
+    assert_eq!(minute_stats.len(), 2);
+    // ordered desc
+    assert_eq!(minute_stats[0].minute, "2026-03-31T12:01");
+    assert_eq!(minute_stats[0].count, 1);
+    assert_eq!(minute_stats[1].minute, "2026-03-31T12:00");
+    assert_eq!(minute_stats[1].count, 2);
+}
+
+#[test]
+fn test_rpc_server_communication() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let db_path = temp_file.path().to_path_buf();
+
+    // Prepare DB
+    {
+        let mut conn = DbManager::init_db(&db_path).unwrap();
+        let records = vec![
+            KeyPressRecord {
+                timestamp: "2026-03-31T12:00:00Z".to_string(),
+                key_name: "KeyA".to_string(),
+                event_type: "KeyPress".to_string(),
+            },
+            KeyPressRecord {
+                timestamp: "2026-03-31T12:00:30Z".to_string(),
+                key_name: "KeyB".to_string(),
+                event_type: "KeyPress".to_string(),
+            },
+        ];
+        DbManager::flush_keypresses(&mut conn, &records).unwrap();
+    }
+
+    let tracker = KeyTracker::new();
+    tracker.record_keypress();
+    tracker.record_keypress();
+    tracker.record_keypress();
+
+    let rpc_addr = "127.0.0.1:19876";
+    let running = Arc::new(AtomicBool::new(true));
+
+    let server = RpcServer::new(
+        rpc_addr.to_string(),
+        db_path,
+        tracker,
+        running.clone(),
+    );
+    let _handle = server.start();
+
+    // Give server time to bind
+    thread::sleep(Duration::from_millis(100));
+
+    // Connect via TcpStream
+    let mut stream = TcpStream::connect(rpc_addr).expect("Failed to connect to RPC server");
+
+    // Send ping request
+    let req = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+    writeln!(stream, "{}", req).unwrap();
+    stream.flush().unwrap();
+
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut response = String::new();
+    reader.read_line(&mut response).unwrap();
+
+    let json_resp: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(json_resp["result"]["status"], "pong");
+
+    // Send get_kpm request
+    let req_kpm = r#"{"jsonrpc":"2.0","method":"get_kpm","id":2}"#;
+    writeln!(stream, "{}", req_kpm).unwrap();
+    stream.flush().unwrap();
+
+    response.clear();
+    reader.read_line(&mut response).unwrap();
+    let json_resp2: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(json_resp2["result"]["kpm"], 3);
+
+    // Send get_total_count
+    let req_total = r#"{"jsonrpc":"2.0","method":"get_total_count","id":3}"#;
+    writeln!(stream, "{}", req_total).unwrap();
+    stream.flush().unwrap();
+
+    response.clear();
+    reader.read_line(&mut response).unwrap();
+    let json_resp3: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(json_resp3["result"]["total_keypresses"], 2);
+
+    running.store(false, Ordering::SeqCst);
 }

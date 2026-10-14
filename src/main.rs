@@ -1,30 +1,31 @@
+mod cli;
 mod db;
 mod listener;
+mod rpc;
+mod tracker;
 mod tray;
 
+use cli::parse_args;
 use db::{DbManager, KeyPressRecord};
 use listener::start_keyboard_listener;
-use std::env;
-use std::path::PathBuf;
+use rpc::RpcServer;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use tracker::KeyTracker;
 use tray::SystemTray;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db_path = env::var("KEYBOARD_DB_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("keypresses.db"));
-
-    let flush_interval_secs: u64 = env::var("FLUSH_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
+    let args = parse_args();
+    let db_path = args.db_path;
+    let rpc_addr = args.rpc_addr;
+    let flush_interval_secs = args.flush_interval_secs;
 
     println!("Initializing Keyboard Server...");
     println!("Database path: {:?}", db_path);
+    println!("RPC address: {}", rpc_addr);
     println!("Flush interval: {} seconds", flush_interval_secs);
 
     let mut db_conn = DbManager::init_db(&db_path)?;
@@ -37,6 +38,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nReceived shutdown signal...");
         r.store(false, Ordering::SeqCst);
     });
+
+    let key_tracker = KeyTracker::new();
+
+    // Start RPC server
+    let rpc_server = RpcServer::new(
+        rpc_addr,
+        db_path.clone(),
+        key_tracker.clone(),
+        running.clone(),
+    );
+    let _rpc_handle = rpc_server.start();
 
     let (tx, rx) = mpsc::channel::<KeyPressRecord>();
 
@@ -65,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Drain pending keypress events from channel
         while let Ok(record) = rx.try_recv() {
+            key_tracker.record_keypress();
             buffer.push(record);
         }
 
@@ -88,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Shutdown cleanup: drain remaining records and do a final flush
     println!("Shutting down Keyboard Server...");
     while let Ok(record) = rx.try_recv() {
+        key_tracker.record_keypress();
         buffer.push(record);
     }
 
