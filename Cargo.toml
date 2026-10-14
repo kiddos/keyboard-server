@@ -11,6 +11,9 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tray-item = { version = "0.10", features = ["ksni"] }
 chrono = "0.4"
 ctrlc = "3.4"
+clap = { version = "4.4", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 tempfile = "3"
