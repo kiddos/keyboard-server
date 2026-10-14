@@ -1,13 +1,18 @@
-all:
-	cmake -B build
-	make -C build -j16
+PREFIX ?= $(HOME)/.local/bin
+
+all: build
+
+build:
+	cargo build --release
+
+test:
+	cargo test
 
 clean:
-	rm -rf build
+	cargo clean
 
-install:
-	cp build/src/keyboard_server ${HOME}/.local/bin
-	cp build/src/apm_client ${HOME}/.local/bin
+install: build
+	mkdir -p $(PREFIX)
+	cp target/release/keyboard-server $(PREFIX)/
 
-.PHONY:
-	all clean
+.PHONY: all build test clean install

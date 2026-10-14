@@ -1,0 +1,16 @@
+[package]
+name = "keyboard-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["Keyboard Server Contributors"]
+description = "Cross-platform keyboard tracking server with SQLite logging and system tray icon."
+
+[dependencies]
+rdev = "0.5"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tray-item = { version = "0.10", features = ["ksni"] }
+chrono = "0.4"
+ctrlc = "3.4"
+
+[dev-dependencies]
+tempfile = "3"

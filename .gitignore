@@ -1,2 +1,5 @@
-build
-.cache
+target/
+/target
+*.db
+*.db-journal
+*.log
