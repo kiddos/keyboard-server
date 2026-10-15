@@ -95,6 +95,19 @@ impl DbManager {
             |row| row.get(0),
         )
     }
+
+    pub fn get_average_kpm(conn: &Connection) -> Result<f64> {
+        // Average keypresses per minute across all distinct minutes recorded in DB
+        let mut stmt = conn.prepare(
+            "SELECT AVG(minute_count) FROM (
+                SELECT COUNT(*) as minute_count
+                FROM keypresses
+                GROUP BY substr(timestamp, 1, 16)
+            )",
+        )?;
+        let avg: Option<f64> = stmt.query_row([], |row| row.get(0))?;
+        Ok(avg.unwrap_or(0.0))
+    }
 }
 
 #[cfg(test)]

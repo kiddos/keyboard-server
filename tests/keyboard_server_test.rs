@@ -17,7 +17,7 @@ mod rpc;
 mod tracker;
 
 use db::{DbManager, KeyPressRecord};
-use rpc::RpcServer;
+use rpc::{RpcClient, RpcServer};
 use tracker::KeyTracker;
 
 #[test]
@@ -267,5 +267,54 @@ fn test_rpc_server_communication() {
     let json_resp3: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(json_resp3["result"]["total_keypresses"], 2);
 
+    // Test RpcClient get_average_kpm
+    let client = RpcClient::new(rpc_addr.to_string());
+    let avg_kpm = client.get_average_kpm().unwrap();
+    assert_eq!(avg_kpm, 2.0);
+
     running.store(false, Ordering::SeqCst);
+}
+
+#[test]
+fn test_db_get_average_kpm() {
+    let mut conn = DbManager::init_db(":memory:").expect("Failed to init DB");
+
+    let records = vec![
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:00:10Z".to_string(),
+            key_name: "KeyA".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:00:20Z".to_string(),
+            key_name: "KeyB".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:01:05Z".to_string(),
+            key_name: "KeyC".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:01:15Z".to_string(),
+            key_name: "KeyD".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:01:25Z".to_string(),
+            key_name: "KeyE".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+        KeyPressRecord {
+            timestamp: "2026-03-31T12:01:35Z".to_string(),
+            key_name: "KeyF".to_string(),
+            event_type: "KeyPress".to_string(),
+        },
+    ];
+
+    DbManager::flush_keypresses(&mut conn, &records).unwrap();
+
+    // Minute 12:00 has 2 keypresses, minute 12:01 has 4 keypresses. Average = (2 + 4) / 2 = 3.0
+    let avg = DbManager::get_average_kpm(&conn).unwrap();
+    assert_eq!(avg, 3.0);
 }
