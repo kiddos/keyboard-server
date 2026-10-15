@@ -19,7 +19,7 @@ pub struct RpcRequest {
     pub id: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RpcResponse {
     pub jsonrpc: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,10 +29,56 @@ pub struct RpcResponse {
     pub id: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RpcError {
     pub code: i32,
     pub message: String,
+}
+
+#[allow(dead_code)]
+pub struct RpcClient {
+    addr: String,
+}
+
+#[allow(dead_code)]
+impl RpcClient {
+    pub fn new(addr: String) -> Self {
+        Self { addr }
+    }
+
+    pub fn get_average_kpm(&self) -> Result<f64, Box<dyn std::error::Error>> {
+        let mut stream = TcpStream::connect(&self.addr)?;
+        let req = json!({
+            "jsonrpc": "2.0",
+            "method": "get_average_kpm",
+            "id": 1
+        });
+        writeln!(stream, "{}", req)?;
+        stream.flush()?;
+
+        let mut reader = BufReader::new(stream);
+        let mut response_str = String::new();
+        reader.read_line(&mut response_str)?;
+
+        let resp: RpcResponse = serde_json::from_str(&response_str)?;
+        if let Some(err) = resp.error {
+            return Err(format!("RPC error: {}", err.message).into());
+        }
+
+        if let Some(result) = resp.result {
+            if let Some(kpm) = result.get("kpm").and_then(|v| v.as_f64()) {
+                return Ok(kpm);
+            }
+        }
+
+        Err("Invalid RPC response structure".into())
+    }
+
+    pub fn print_average_kpm(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let kpm = self.get_average_kpm()?;
+        println!("{}", json!({ "kpm": kpm }));
+        Ok(())
+    }
 }
 
 pub struct RpcServer {
@@ -147,6 +193,34 @@ fn process_request(req: RpcRequest, db_path: &PathBuf, tracker: &KeyTracker) -> 
             result: Some(json!({"status": "pong"})),
             error: None,
             id,
+        },
+        "get_average_kpm" => match conn_res {
+            Ok(conn) => match DbManager::get_average_kpm(&conn) {
+                Ok(avg_kpm) => RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: Some(json!({ "kpm": avg_kpm })),
+                    error: None,
+                    id,
+                },
+                Err(e) => RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(RpcError {
+                        code: -32603,
+                        message: format!("DB query error: {}", e),
+                    }),
+                    id,
+                },
+            },
+            Err(e) => RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(RpcError {
+                    code: -32603,
+                    message: format!("DB open error: {}", e),
+                }),
+                id,
+            },
         },
         "get_kpm" => RpcResponse {
             jsonrpc: "2.0".to_string(),

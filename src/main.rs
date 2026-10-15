@@ -5,10 +5,10 @@ mod rpc;
 mod tracker;
 mod tray;
 
-use cli::parse_args;
+use cli::{parse_args, Commands};
 use db::{DbManager, KeyPressRecord};
 use listener::start_keyboard_listener;
-use rpc::RpcServer;
+use rpc::{RpcClient, RpcServer};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -19,6 +19,13 @@ use tray::SystemTray;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
+
+    if let Some(Commands::GetAverageKpm) = args.command {
+        let client = RpcClient::new(args.rpc_addr);
+        client.print_average_kpm()?;
+        return Ok(());
+    }
+
     let db_path = args.db_path;
     let rpc_addr = args.rpc_addr;
     let flush_interval_secs = args.flush_interval_secs;
